@@ -13,9 +13,6 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
-<<<<<<< HEAD
-=======
 *.swp
 
 *.code-workspace
->>>>>>> 83f4651... update .gitignore
