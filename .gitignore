@@ -20,3 +20,4 @@ cs-firewall-bouncer
 # vendor/
 *.swp
 
+*.code-workspace
