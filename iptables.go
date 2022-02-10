@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package main
@@ -16,7 +17,7 @@ type iptables struct {
 	v6 *ipTablesContext
 }
 
-func newIPTables(config *bouncerConfig) (interface{}, error) {
+func newIPTables(config *bouncerConfig) (backend, error) {
 	var err error
 	var ret *iptables = &iptables{}
 	ipv4Ctx := &ipTablesContext{
@@ -48,7 +49,7 @@ func newIPTables(config *bouncerConfig) (interface{}, error) {
 		return nil, fmt.Errorf("unable to find ipset")
 	}
 	ipv4Ctx.ipsetBin = ipsetBin
-	if config.Mode == "ipset" {
+	if config.Mode == IpsetMode {
 		ipv4Ctx.ipsetContentOnly = true
 	} else {
 		ipv4Ctx.iptablesBin, err = exec.LookPath("iptables")
@@ -77,7 +78,7 @@ func newIPTables(config *bouncerConfig) (interface{}, error) {
 		return ret, nil
 	}
 	ipv6Ctx.ipsetBin = ipsetBin
-	if config.Mode == "ipset" {
+	if config.Mode == IpsetMode {
 		ipv6Ctx.ipsetContentOnly = true
 	} else {
 		ipv6Ctx.iptablesBin, err = exec.LookPath("ip6tables")
@@ -132,6 +133,10 @@ func (ipt *iptables) Init() error {
 			return fmt.Errorf("iptables init failed: %s", err.Error())
 		}
 	}
+	return nil
+}
+
+func (ipt *iptables) Commit() error {
 	return nil
 }
 

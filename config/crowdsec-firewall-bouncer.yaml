@@ -5,6 +5,10 @@ daemonize: true
 log_mode: file
 log_dir: /var/log/
 log_level: info
+log_compression: true
+log_max_size: 100
+log_max_backups: 3
+log_max_age: 30
 api_url: http://localhost:8080/
 api_key: ${API_KEY}
 disable_ipv6: false
@@ -15,8 +19,8 @@ supported_decisions_types:
 #to change log prefix
 #deny_log_prefix: "crowdsec: "
 #to change the blacklists name
-#blacklists_ipv4: crowdsec-blacklists
-#blacklists_ipv6: crowdsec6-blacklists
+blacklists_ipv4: crowdsec-blacklists
+blacklists_ipv6: crowdsec6-blacklists
 #if present, insert rule in those chains
 iptables_chains:
   - INPUT
@@ -27,13 +31,15 @@ iptables_chains:
 nftables:
   ipv4:
     enabled: true
-    blacklist: crowdsec-blacklist
     set-only: false
     table: crowdsec
     chain: crowdsec-chain
   ipv6:
     enabled: true
-    blacklist: crowdsec6-blacklist
     set-only: false
     table: crowdsec6
     chain: crowdsec6-chain
+# packet filter
+pf:
+  # an empty string disables the anchor
+  anchor_name: crowdsec

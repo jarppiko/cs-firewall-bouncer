@@ -13,6 +13,7 @@ type backend interface {
 	ShutDown() error
 	Add(*models.Decision) error
 	Delete(*models.Decision) error
+	Commit() error
 }
 
 type backendCTX struct {
@@ -20,33 +21,23 @@ type backendCTX struct {
 }
 
 func (b *backendCTX) Init() error {
-	err := b.firewall.Init()
-	if err != nil {
-		return err
-	}
-	return nil
+	return b.firewall.Init()
+}
+
+func (b *backendCTX) Commit() error {
+	return b.firewall.Commit()
 }
 
 func (b *backendCTX) ShutDown() error {
-	err := b.firewall.ShutDown()
-	if err != nil {
-		return err
-	}
-	return nil
+	return b.firewall.ShutDown()
 }
 
 func (b *backendCTX) Add(decision *models.Decision) error {
-	if err := b.firewall.Add(decision); err != nil {
-		return err
-	}
-	return nil
+	return b.firewall.Add(decision)
 }
 
 func (b *backendCTX) Delete(decision *models.Decision) error {
-	if err := b.firewall.Delete(decision); err != nil {
-		return err
-	}
-	return nil
+	return b.firewall.Delete(decision)
 }
 
 func isPFSupported(runtimeOS string) bool {
@@ -63,7 +54,7 @@ func isPFSupported(runtimeOS string) bool {
 }
 
 func newBackend(config *bouncerConfig) (*backendCTX, error) {
-	var ok bool
+	var err error
 
 	b := &backendCTX{}
 	log.Printf("backend type : %s", config.Mode)
@@ -71,41 +62,29 @@ func newBackend(config *bouncerConfig) (*backendCTX, error) {
 		log.Println("IPV6 is disabled")
 	}
 	switch config.Mode {
-	case "iptables", "ipset":
+	case IptablesMode, IpsetMode:
 		if runtime.GOOS != "linux" {
 			return nil, fmt.Errorf("iptables and ipset is linux only")
 		}
-		tmpCtx, err := newIPTables(config)
+		b.firewall, err = newIPTables(config)
 		if err != nil {
 			return nil, err
 		}
-		b.firewall, ok = tmpCtx.(backend)
-		if !ok {
-			return nil, fmt.Errorf("unexpected type '%T' for iptables context", tmpCtx)
-		}
-	case "nftables":
+	case NftablesMode:
 		if runtime.GOOS != "linux" {
 			return nil, fmt.Errorf("nftables is linux only")
 		}
-		tmpCtx, err := newNFTables(config)
+		b.firewall, err = newNFTables(config)
 		if err != nil {
 			return nil, err
-		}
-		b.firewall, ok = tmpCtx.(backend)
-		if !ok {
-			return nil, fmt.Errorf("unexpected type '%T' for nftables context", tmpCtx)
 		}
 	case "pf":
 		if !isPFSupported(runtime.GOOS) {
-			return nil, fmt.Errorf("pf mode is supported only for openbsd and freebsd")
+			log.Warning("pf mode can only work with openbsd and freebsd. It is available on other platforms only for testing purposes")
 		}
-		tmpCtx, err := newPF(config)
+		b.firewall, err = newPF(config)
 		if err != nil {
 			return nil, err
-		}
-		b.firewall, ok = tmpCtx.(backend)
-		if !ok {
-			return nil, fmt.Errorf("unexpected type '%T' for pf context", tmpCtx)
 		}
 	default:
 		return b, fmt.Errorf("firewall '%s' is not supported", config.Mode)
