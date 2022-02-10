@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"strings"
 
 	"github.com/crowdsecurity/crowdsec/pkg/types"
 	log "github.com/sirupsen/logrus"
@@ -12,12 +13,17 @@ import (
 )
 
 type nftablesFamilyConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	SetOnly   bool   `yaml:"set-only"`
-	Table     string `yaml:"table"`
-	Chain     string `yaml:"chain"`
-	Blacklist string `yaml:"blacklist"`
+	Enabled bool   `yaml:"enabled"`
+	SetOnly bool   `yaml:"set-only"`
+	Table   string `yaml:"table"`
+	Chain   string `yaml:"chain"`
+	// Blacklist string `yaml:"blacklist"`
 }
+
+var IpsetMode = "ipset"
+var IptablesMode = "iptables"
+var NftablesMode = "nftables"
+var PfMode = "pf"
 
 type bouncerConfig struct {
 	Mode            string    `yaml:"mode"` //ipset,iptables,tc
@@ -27,6 +33,10 @@ type bouncerConfig struct {
 	LogMode         string    `yaml:"log_mode"`
 	LogDir          string    `yaml:"log_dir"`
 	LogLevel        log.Level `yaml:"log_level"`
+	CompressLogs    *bool     `yaml:"compress_logs,omitempty"`
+	LogMaxSize      int       `yaml:"log_max_size,omitempty"`
+	LogMaxFiles     int       `yaml:"log_max_files,omitempty"`
+	LogMaxAge       int       `yaml:"log_max_age,omitempty"`
 	APIUrl          string    `yaml:"api_url"`
 	APIKey          string    `yaml:"api_key"`
 	DisableIPV6     bool      `yaml:"disable_ipv6"`
@@ -40,15 +50,13 @@ type bouncerConfig struct {
 	IptablesChains          []string `yaml:"iptables_chains"`
 	supportedDecisionsTypes []string `yaml:"supported_decisions_type"`
 	// specific to nftables, following https://github.com/crowdsecurity/cs-firewall-bouncer/issues/74
-	/*	NftablesTable4         string `yaml:"nftables_table4"`
-		NftablesChain4         string `yaml:"nftables_chain4"`
-		NftablesTable6         string `yaml:"nftables_table6"`
-		NftablesChain6         string `yaml:"nftables_chain6"`
-	*/
 	Nftables struct {
 		Ipv4 nftablesFamilyConfig `yaml:"ipv4"`
 		Ipv6 nftablesFamilyConfig `yaml:"ipv6"`
 	} `yaml:"nftables"`
+	PF struct {
+		AnchorName *string `yaml:"anchor_name"`
+	} `yaml:"pf"`
 }
 
 func newConfig(configPath string) (*bouncerConfig, error) {
@@ -81,69 +89,103 @@ func newConfig(configPath string) (*bouncerConfig, error) {
 		config.DenyLogPrefix = "crowdsec drop: "
 	}
 	// for config file backward compatibility
-	if config.BlacklistsIpv4 != "" {
-		config.Nftables.Ipv4.Blacklist = config.BlacklistsIpv4
+	if config.BlacklistsIpv4 == "" {
+		config.BlacklistsIpv4 = "crowdsec-blacklists"
+	}
+	if config.BlacklistsIpv6 == "" {
+		config.BlacklistsIpv6 = "crowdsec6-blacklists"
 	}
 
-	if config.BlacklistsIpv6 != "" {
-		config.Nftables.Ipv6.Blacklist = config.BlacklistsIpv6
+	switch config.Mode {
+	case NftablesMode:
+		err := nftablesConfig(config)
+		if err != nil {
+			return nil, err
+		}
+	case IpsetMode, IptablesMode:
+		//nothing specific to do
+	case PfMode:
+		err := pfConfig(config)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		log.Warningf("unexpected %s mode", config.Mode)
 	}
+	return config, nil
+}
 
+func pfConfig(config *bouncerConfig) error {
+	// to avoid using an anchor, it has to be set to an empty string
+	// in the config file
+	if config.PF.AnchorName == nil {
+		defaultAnchor := "crowdsec"
+		config.PF.AnchorName = &defaultAnchor
+	}
+	return nil
+}
+
+func nftablesConfig(config *bouncerConfig) error {
 	// nftables IPv4 specific
 	if config.Nftables.Ipv4.Enabled {
 		if config.Nftables.Ipv4.Table == "" {
 			config.Nftables.Ipv4.Table = "crowdsec"
 		}
-
 		if config.Nftables.Ipv4.Chain == "" {
 			config.Nftables.Ipv4.Chain = "crowdsec-chain"
 		}
-
-		if config.Nftables.Ipv4.Blacklist == "" {
-			config.Nftables.Ipv4.Blacklist = "crowdsec-blacklist"
-		}
 	}
 	// nftables IPv6 specific
-	// What if config.DisableIPV6 (bool) has not been defined?
 	if config.DisableIPV6 {
 		config.Nftables.Ipv6.Enabled = false
 	}
-	// for config file compability
-	config.DisableIPV6 = !config.Nftables.Ipv6.Enabled
-
 	if config.Nftables.Ipv6.Enabled {
 		if config.Nftables.Ipv6.Table == "" {
 			config.Nftables.Ipv6.Table = "crowdsec6"
 		}
-
 		if config.Nftables.Ipv6.Chain == "" {
 			config.Nftables.Ipv6.Chain = "crowdsec6-chain"
 		}
-
-		if config.Nftables.Ipv6.Blacklist == "" {
-			config.Nftables.Ipv6.Blacklist = "crowdsec6-blacklist"
-		}
 	}
-	return config, nil
+	if !config.Nftables.Ipv4.Enabled && !config.Nftables.Ipv6.Enabled {
+		return fmt.Errorf("both IPv4 and IPv6 disabled, doing nothing")
+	}
+	return nil
 }
 
 func configureLogging(config *bouncerConfig) {
 	var LogOutput *lumberjack.Logger //io.Writer
 
 	/*Configure logging*/
-	if err := types.SetDefaultLoggerConfig(config.LogMode, config.LogDir, config.LogLevel); err != nil {
+	if err := types.SetDefaultLoggerConfig(config.LogMode, config.LogDir, config.LogLevel, config.LogMaxSize, config.LogMaxFiles, config.LogMaxAge, config.CompressLogs); err != nil {
 		log.Fatal(err.Error())
 	}
 	if config.LogMode == "file" {
 		if config.LogDir == "" {
 			config.LogDir = "/var/log/"
 		}
+		_maxsize := 500
+		if config.LogMaxSize != 0 {
+			_maxsize = config.LogMaxSize
+		}
+		_maxfiles := 3
+		if config.LogMaxFiles != 0 {
+			_maxfiles = config.LogMaxFiles
+		}
+		_maxage := 30
+		if config.LogMaxAge != 0 {
+			_maxage = config.LogMaxAge
+		}
+		_compress := true
+		if config.CompressLogs != nil {
+			_compress = *config.CompressLogs
+		}
 		LogOutput = &lumberjack.Logger{
 			Filename:   config.LogDir + "/crowdsec-firewall-bouncer.log",
-			MaxSize:    500, //megabytes
-			MaxBackups: 3,
-			MaxAge:     28,   //days
-			Compress:   true, //disabled by default
+			MaxSize:    _maxsize, //megabytes
+			MaxBackups: _maxfiles,
+			MaxAge:     _maxage,   //days
+			Compress:   _compress, //disabled by default
 		}
 		log.SetOutput(LogOutput)
 		log.SetFormatter(&log.TextFormatter{TimestampFormat: "02-01-2006 15:04:05", FullTimestamp: true})
@@ -154,20 +196,18 @@ func validateConfig(config bouncerConfig) error {
 	if config.APIUrl == "" {
 		return fmt.Errorf("config does not contain LAPI url")
 	}
+	if !strings.HasSuffix(config.APIUrl, "/") {
+		config.APIUrl += "/"
+	}
 	if config.APIKey == "" {
 		return fmt.Errorf("config does not contain LAPI key")
 	}
-
 	if config.Mode == "" || config.LogMode == "" {
 		return fmt.Errorf("config does not contain mode and log mode")
 	}
-
 	if config.LogMode != "stdout" && config.LogMode != "file" {
 		return fmt.Errorf("log mode '%s' unknown, expecting 'file' or 'stdout'", config.LogMode)
 	}
 
-	if config.Nftables.Ipv4.Enabled == false && config.Nftables.Ipv6.Enabled == false {
-		return fmt.Errorf("Both IPv4 and IPv6 disabled, doing nothing")
-	}
 	return nil
 }
