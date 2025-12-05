@@ -9,7 +9,7 @@ require (
 	github.com/crowdsecurity/go-cs-lib v0.0.0-20230522120244-fa545c12e7ee
 	github.com/google/nftables v0.0.0-20220808154552-2eca00135732
 	github.com/prometheus/client_golang v1.14.0
-	github.com/sirupsen/logrus v1.9.2
+	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/exp v0.0.0-20230425010034-47ecfdc1ba53
 	golang.org/x/sync v0.1.0
 	golang.org/x/sys v0.7.0
